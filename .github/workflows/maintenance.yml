@@ -1,0 +1,195 @@
+name: 維護模式管理
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '選擇操作'
+        required: true
+        default: 'start'
+        type: choice
+        options:
+          - start
+          - end
+      reason:
+        description: '維護原因'
+        required: false
+        default: '系統升級'
+        type: string
+      duration:
+        description: '預估維護時間'
+        required: false
+        default: '1小時'
+        type: string
+      contact:
+        description: '聯絡方式'
+        required: false
+        default: 'makerbackup0821@gmail.com'
+        type: string
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    
+    steps:
+      - name: 檢查儲存庫
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 設定 Git 使用者
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: 啟動維護模式
+        if: ${{ inputs.action == 'start' }}
+        run: |
+          echo "🔧 啟動維護模式..."
+          
+          # 建立維護狀態檔案
+          cat > maintenance-status.json << EOF
+          {
+              "maintenance": true,
+              "message": "系統維護中 - ${{ inputs.reason }}",
+              "startTime": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')",
+              "endTime": null,
+              "reason": "${{ inputs.reason }}",
+              "duration": "${{ inputs.duration }}",
+              "contact": "${{ inputs.contact }}",
+              "triggeredBy": "GitHub Action",
+              "triggeredAt": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          }
+          EOF
+          
+          # 備份原始 index.html 為 main_index.html
+          if [ ! -f "main_index.html" ]; then
+            cp index.html main_index.html
+            echo "✅ 已備份原始 index.html 為 main_index.html"
+          fi
+          
+          # 將 maintenance.html 複製為 index.html
+          if [ -f "maintenance.html" ]; then
+            cp maintenance.html index.html
+            echo "✅ 已將維護頁面設為首頁"
+          else
+            echo "❌ 找不到 maintenance.html 檔案"
+            exit 1
+          fi
+          
+          echo "✅ 維護模式已啟動"
+          echo "📊 維護資訊："
+          echo "  - 原因: ${{ inputs.reason }}"
+          echo "  - 時間: ${{ inputs.duration }}"
+          echo "  - 聯絡: ${{ inputs.contact }}"
+
+      - name: 結束維護模式
+        if: ${{ inputs.action == 'end' }}
+        run: |
+          echo "🔧 結束維護模式..."
+          
+          # 更新維護狀態檔案
+          cat > maintenance-status.json << EOF
+          {
+              "maintenance": false,
+              "message": "系統正常運行",
+              "startTime": null,
+              "endTime": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')",
+              "reason": null,
+              "duration": null,
+              "contact": null,
+              "endedBy": "GitHub Action",
+              "endedAt": "$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          }
+          EOF
+          
+          # 恢復原始 index.html
+          if [ -f "main_index.html" ]; then
+            cp main_index.html index.html
+            echo "✅ 已恢復原始 index.html"
+          else
+            echo "⚠️ 找不到備份檔案 main_index.html，請手動檢查 index.html"
+          fi
+          
+          echo "✅ 維護模式已結束"
+          echo "🌐 網站現在正常運行"
+
+      - name: 提交變更
+        run: |
+          git add maintenance-status.json index.html
+          
+          if [ "${{ inputs.action }}" == "start" ]; then
+            git commit -m "🔧 啟動維護模式
+
+          - 原因: ${{ inputs.reason }}
+          - 時間: ${{ inputs.duration }}
+          - 聯絡: ${{ inputs.contact }}
+          - 觸發: GitHub Action"
+          else
+            git commit -m "✅ 結束維護模式
+
+          - 系統已恢復正常運行
+          - 觸發: GitHub Action"
+          fi
+          
+          git push
+
+      - name: 部署到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
+
+      - name: 建立維護記錄
+        if: ${{ inputs.action == 'start' }}
+        run: |
+          echo "📝 建立維護記錄..."
+          
+          # 建立維護記錄目錄
+          mkdir -p .maintenance-logs
+          
+          # 建立維護記錄檔案
+          cat > .maintenance-logs/maintenance-$(date +%Y%m%d-%H%M%S).log << EOF
+          === 維護記錄 ===
+          開始時間: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          維護原因: ${{ inputs.reason }}
+          預估時間: ${{ inputs.duration }}
+          聯絡方式: ${{ inputs.contact }}
+          觸發方式: GitHub Action
+          操作者: ${{ github.actor }}
+          提交: ${{ github.sha }}
+          ================
+          EOF
+          
+          echo "✅ 維護記錄已建立"
+
+      - name: 發送通知
+        if: always()
+        run: |
+          if [ "${{ inputs.action }}" == "start" ]; then
+            echo "🔔 維護模式已啟動"
+            echo "📧 如需通知團隊成員，請手動發送通知"
+          else
+            echo "🔔 維護模式已結束"
+            echo "📧 系統已恢復正常運行"
+          fi
+
+      - name: 顯示結果
+        if: always()
+        run: |
+          echo "=== 操作完成 ==="
+          echo "操作: ${{ inputs.action }}"
+          echo "時間: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "狀態: ${{ job.status }}"
+          echo "================"
+          
+          if [ -f "maintenance-status.json" ]; then
+            echo "📄 當前維護狀態："
+            cat maintenance-status.json
+          fi
